@@ -14,13 +14,10 @@ class Order(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     booking_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    # attendee_id is optional — an order can belong to the whole booking
-    # or to a specific attendee for per-person ordering.
     attendee_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default="pending", index=True
     )
-    # Order status flow: pending -> confirmed -> served
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, index=True)
 
@@ -48,29 +45,16 @@ class OrderItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
 
-    # Plain integer — no FK constraint. MenuItem lives in the same DB but
-    # we treat it as a cross-model reference resolved at read time, not a
-    # join. This keeps orders intact if a menu item is later deactivated.
+    # Plain integer — no FK constraint. menu_items table is owned by
+    # menu_service. price is snapshotted at order time; menu_item_id
+    # is just a reference for display purposes.
     menu_item_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Snapshot of price_cents at the time the order was placed.
-    # Never re-query the menu item for price — this is the source of truth
-    # for billing and order history.
+    # Never re-query the menu item for price — this is the source of truth.
     price_at_time: Mapped[int] = mapped_column(Integer, nullable=False)
 
     order: Mapped["Order"] = relationship(back_populates="items")
-
-
-class MenuItem(Base):
-    __tablename__ = "menu_items"
-
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[str] = mapped_column(String(100), nullable=False)
-    price_cents: Mapped[int] = mapped_column(Integer, nullable=False)
-    dietary_restrictions: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    is_active: Mapped[bool] = mapped_column(default=True, index=True)

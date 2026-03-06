@@ -1,17 +1,15 @@
 # orders_service/app/main.py
-import json
-
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from .database import Base, engine, get_db
-from .models import Order, OrderItem, MenuItem
-from .schema import (
-    CreateMenuItem, UpdateMenuItem, MenuItemResponse,
+from .models import Order, OrderItem
+from .schemas import (
     CreateOrder, UpdateOrder, OrderResponse,
-    CreateOrderItem, OrderItemResponse,
+    CreateOrderItem, OrderItemResponse, MenuItemStub,
 )
 from . import auth
 
@@ -32,26 +30,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def get_menu_item_or_404(item_id: int, db: Session) -> MenuItem:
-    item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
-    if not item:
-        raise HTTPException(status_code=404, detail=f"Menu item {item_id} not found")
-    return item
+def fetch_menu_item(item_id: int, db: Session):
+    """
+    Read menu item directly from the shared DB.
+    menu_service owns the API; we just read the table for price snapshots
+    and display data. No HTTP call needed — same DB.
+    """
+    row = db.execute(
+        text("SELECT id, name, category, price_cents, is_active FROM menu_items WHERE id = :id"),
+        {"id": item_id}
+    ).fetchone()
+    return row._mapping if row else None
 
 
 def build_order_response(order: Order, db: Session) -> OrderResponse:
-    """
-    Populate menu_item on each OrderItem at read time.
-    No cross-service FK — we resolve by ID against the local menu_items table.
-    """
     item_responses = []
     for oi in order.items:
-        menu_item_obj = db.query(MenuItem).filter(MenuItem.id == oi.menu_item_id).first()
-        menu_item_resp = MenuItemResponse.model_validate(menu_item_obj) if menu_item_obj else None
+        menu_row = fetch_menu_item(oi.menu_item_id, db)
+        menu_stub = MenuItemStub(**menu_row) if menu_row else None
         item_responses.append(OrderItemResponse(
             id=oi.id,
             order_id=oi.order_id,
@@ -59,7 +60,7 @@ def build_order_response(order: Order, db: Session) -> OrderResponse:
             quantity=oi.quantity,
             notes=oi.notes,
             price_at_time=oi.price_at_time,
-            menu_item=menu_item_resp,
+            menu_item=menu_stub,
         ))
 
     return OrderResponse(
@@ -76,75 +77,6 @@ def build_order_response(order: Order, db: Session) -> OrderResponse:
 
 
 # ---------------------------------------------------------------------------
-# Menu routes
-# ---------------------------------------------------------------------------
-
-@app.get("/menu/", response_model=List[MenuItemResponse])
-def list_menu_items(
-    active_only: bool = True,
-    db: Session = Depends(get_db),
-):
-    q = db.query(MenuItem)
-    if active_only:
-        q = q.filter(MenuItem.is_active == True)
-    return q.order_by(MenuItem.category, MenuItem.name).all()
-
-
-@app.get("/menu/{item_id}", response_model=MenuItemResponse)
-def get_menu_item(item_id: int, db: Session = Depends(get_db)):
-    return get_menu_item_or_404(item_id, db)
-
-
-@app.post("/menu/", response_model=MenuItemResponse, status_code=201)
-def create_menu_item(
-    payload: CreateMenuItem,
-    db: Session = Depends(get_db),
-    current_user=Depends(auth.require_admin),
-):
-    item = MenuItem(
-        name=payload.name,
-        description=payload.description,
-        category=payload.category,
-        price_cents=payload.price_cents,
-        dietary_restrictions=json.dumps(payload.dietary_restrictions),
-        is_active=payload.is_active,
-    )
-    db.add(item)
-    db.commit()
-    db.refresh(item)
-    return item
-
-
-@app.patch("/menu/{item_id}", response_model=MenuItemResponse)
-def update_menu_item(
-    item_id: int,
-    payload: UpdateMenuItem,
-    db: Session = Depends(get_db),
-    current_user=Depends(auth.require_admin),
-):
-    item = get_menu_item_or_404(item_id, db)
-    updates = payload.model_dump(exclude_unset=True)
-    if "dietary_restrictions" in updates:
-        updates["dietary_restrictions"] = json.dumps(updates["dietary_restrictions"])
-    for field, value in updates.items():
-        setattr(item, field, value)
-    db.commit()
-    db.refresh(item)
-    return item
-
-
-@app.delete("/menu/{item_id}", status_code=204)
-def deactivate_menu_item(
-    item_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(auth.require_admin),
-):
-    item = get_menu_item_or_404(item_id, db)
-    item.is_active = False
-    db.commit()
-
-
-# ---------------------------------------------------------------------------
 # Order routes
 # ---------------------------------------------------------------------------
 
@@ -157,13 +89,12 @@ def create_order(
     # Validate all menu items exist and are active before writing anything
     resolved_items = []
     for ci in payload.items:
-        menu_item = get_menu_item_or_404(ci.menu_item_id, db)
-        if not menu_item.is_active:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Menu item {ci.menu_item_id} is not currently available",
-            )
-        resolved_items.append((ci, menu_item))
+        menu_row = fetch_menu_item(ci.menu_item_id, db)
+        if not menu_row:
+            raise HTTPException(status_code=404, detail=f"Menu item {ci.menu_item_id} not found")
+        if not menu_row["is_active"]:
+            raise HTTPException(status_code=400, detail=f"Menu item {ci.menu_item_id} is not currently available")
+        resolved_items.append((ci, menu_row))
 
     order = Order(
         booking_id=payload.booking_id,
@@ -172,15 +103,15 @@ def create_order(
         status="pending",
     )
     db.add(order)
-    db.flush()  # get order.id before adding items
+    db.flush()
 
-    for ci, menu_item in resolved_items:
+    for ci, menu_row in resolved_items:
         db.add(OrderItem(
             order_id=order.id,
             menu_item_id=ci.menu_item_id,
             quantity=ci.quantity,
             notes=ci.notes,
-            price_at_time=menu_item.price_cents,  # snapshot price now
+            price_at_time=menu_row["price_cents"],  # snapshot
         ))
 
     db.commit()
@@ -251,8 +182,10 @@ def add_order_item(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    menu_item = get_menu_item_or_404(payload.menu_item_id, db)
-    if not menu_item.is_active:
+    menu_row = fetch_menu_item(payload.menu_item_id, db)
+    if not menu_row:
+        raise HTTPException(status_code=404, detail="Menu item not found")
+    if not menu_row["is_active"]:
         raise HTTPException(status_code=400, detail="Menu item is not currently available")
 
     db.add(OrderItem(
@@ -260,7 +193,7 @@ def add_order_item(
         menu_item_id=payload.menu_item_id,
         quantity=payload.quantity,
         notes=payload.notes,
-        price_at_time=menu_item.price_cents,
+        price_at_time=menu_row["price_cents"],
     ))
     db.commit()
     db.refresh(order)

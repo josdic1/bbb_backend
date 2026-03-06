@@ -51,6 +51,8 @@ class Booking(Base):
 
     notes: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
+    has_orders: Mapped[bool] = mapped_column(nullable=False, default=False)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -70,6 +72,11 @@ class Booking(Base):
     )
     attendees: Mapped[List["BookingAttendee"]] = relationship(
         "BookingAttendee",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    seat_assignments: Mapped[List["SeatAssignment"]] = relationship(
+        "SeatAssignment",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
@@ -101,3 +108,17 @@ class BookingAttendee(Base):
 
     relation: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # primary | family | guest
     dietary_restrictions: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String), nullable=True)
+
+
+class SeatAssignment(Base):
+    __tablename__ = "seat_assignments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    booking_id: Mapped[int] = mapped_column(
+        ForeignKey("bookings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    attendee_id: Mapped[int] = mapped_column(Integer, nullable=False)  # FK to booking_attendees, no constraint
+    table_id: Mapped[int] = mapped_column(Integer, nullable=False)     # FK to rooms_service tables, no constraint
+    seat_number: Mapped[int] = mapped_column(Integer, nullable=False)

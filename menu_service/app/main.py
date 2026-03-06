@@ -7,7 +7,7 @@ from typing import List
 
 from .database import Base, engine, get_db
 from .models import MenuItem
-from .schema import CreateMenuItem, UpdateMenuItem, MenuItemResponse
+from .schemas import CreateMenuItem, UpdateMenuItem, MenuItemResponse
 from . import auth
 
 # ---------------------------------------------------------------------------

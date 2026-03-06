@@ -105,7 +105,8 @@
         background: #f7f7f7;
       }
       #bookingsList,
-      #ordersList {
+      #ordersList,
+      #seatsList {
         border: 1px solid #ddd;
         border-radius: 10px;
         padding: 10px;
@@ -125,6 +126,19 @@
         color: #d6e4ff;
         padding: 10px;
         border-radius: 10px;
+        overflow: auto;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      .card-display {
+        background: #0b1020;
+        color: #d6e4ff;
+        padding: 16px;
+        border-radius: 10px;
+        font-family: monospace;
+        font-size: 13px;
+        line-height: 1.7;
+        white-space: pre;
         overflow: auto;
       }
       .dietary {
@@ -164,6 +178,18 @@
       }
       .btn-cancel {
         background: #e74c3c;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+      }
+      .btn-teal {
+        background: #16a085;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+      }
+      .btn-orange {
+        background: #d35400;
         color: #fff;
         border: none;
         border-radius: 6px;
@@ -209,32 +235,29 @@
     <div class="panel">
       <h2>Dashboard</h2>
       <div class="dash">
-        <!-- LEFT: bookings list -->
         <div>
           <h3>Existing Bookings</h3>
+          <div class="muted">
+            Attendee IDs shown in parentheses — needed for seat assignment
+          </div>
           <div id="bookingsList">
             <div class="muted">Click "Load Bookings"</div>
           </div>
         </div>
-
-        <!-- RIGHT: attendees builder -->
         <div>
           <h3>Attendees Builder</h3>
           <label>User ID</label>
           <input id="user_id" type="number" placeholder="123" />
           <div class="muted">Auto-filled by Who am I, or enter manually</div>
           <button onclick="loadMembersForUser()">Load Members</button>
-
           <div class="panel">
             <div class="muted">Members (click to add/remove)</div>
             <div id="membersPicker" class="picker"></div>
-
             <div class="muted" style="margin-top: 10px">Guests</div>
             <div class="hstack">
               <button onclick="addGuestRow()">+ Add Guest</button>
             </div>
             <div id="guestRows" class="stack" style="margin-top: 10px"></div>
-
             <div class="muted" style="margin-top: 10px">Selected Attendees</div>
             <div id="selectedAttendees" class="chiplist"></div>
           </div>
@@ -263,7 +286,6 @@
           </select>
         </div>
       </div>
-
       <div class="panel">
         <div class="row2">
           <div>
@@ -279,7 +301,6 @@
         </div>
         <div id="roomsTables" class="stack" style="margin-top: 10px"></div>
       </div>
-
       <div class="row2">
         <div>
           <label>Duration Minutes</label>
@@ -294,7 +315,6 @@
           />
         </div>
       </div>
-
       <label>Notes</label>
       <input id="notes" placeholder="Window if possible" />
       <button onclick="createBooking()">Save as Draft</button>
@@ -310,7 +330,6 @@
         type="number"
         placeholder="booking id from list above"
       />
-
       <div class="row4" style="margin-top: 12px">
         <div>
           <button class="btn-confirm" onclick="confirmBooking()">
@@ -337,6 +356,96 @@
       </div>
     </div>
 
+    <!-- ── RESERVATION CARD ── -->
+    <hr class="section-divider" />
+    <h2>
+      Reservation Card
+      <span class="muted" style="font-size: 13px; font-weight: 400"
+        >— reservation_card_service :8085</span
+      >
+    </h2>
+    <div class="panel">
+      <div class="row2">
+        <div>
+          <label>Booking ID</label>
+          <input id="card_booking_id" type="number" placeholder="booking id" />
+        </div>
+        <div
+          style="
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+            margin-top: 10px;
+          "
+        >
+          <button class="btn-orange" onclick="generateCard()">
+            Generate / Refresh Card
+          </button>
+          <button onclick="loadCard()">Load Card</button>
+          <button onclick="loadAllCards()">All Cards</button>
+        </div>
+      </div>
+      <div class="muted" style="margin-top: 8px">
+        Generate rebuilds the card fresh from the DB. Load reads the stored
+        version.
+      </div>
+      <div id="cardDisplay" class="card-display" style="margin-top: 12px">
+        Click "Generate / Refresh Card" or "Load Card"
+      </div>
+    </div>
+
+    <!-- ── SEAT ASSIGNMENTS ── -->
+    <hr class="section-divider" />
+    <h2>
+      Seat Assignments
+      <span class="muted" style="font-size: 13px; font-weight: 400"
+        >— booking must be seated</span
+      >
+    </h2>
+    <div class="panel">
+      <div class="row2">
+        <div>
+          <label>Booking ID</label>
+          <input id="seat_booking_id" type="number" placeholder="booking id" />
+        </div>
+        <div>
+          <button
+            class="btn-teal"
+            style="margin-top: 28px"
+            onclick="loadSeatsForBooking()"
+          >
+            Load Seats
+          </button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="muted">
+          Assign a seat — attendee IDs visible in the bookings list above
+        </div>
+        <div class="row3" style="margin-top: 8px">
+          <div>
+            <label>Attendee ID</label>
+            <input
+              id="seat_attendee_id"
+              type="number"
+              placeholder="from booking attendees"
+            />
+          </div>
+          <div>
+            <label>Table ID</label>
+            <input id="seat_table_id" type="number" placeholder="table id" />
+          </div>
+          <div>
+            <label>Seat Number</label>
+            <input id="seat_number" type="number" placeholder="1, 2, 3…" />
+          </div>
+        </div>
+        <button class="btn-teal" onclick="assignSeat()">Assign Seat</button>
+      </div>
+      <h3 style="margin-top: 16px">Current Seat Assignments</h3>
+      <div id="seatsList"><div class="muted">Click "Load Seats"</div></div>
+    </div>
+
     <!-- ── ORDERS ── -->
     <hr class="section-divider" />
     <h2>
@@ -345,7 +454,6 @@
         >— orders_service :8083</span
       >
     </h2>
-
     <div class="panel">
       <div class="row2">
         <div>
@@ -364,20 +472,15 @@
           />
         </div>
       </div>
-
       <div class="hstack" style="margin-top: 8px">
         <button onclick="loadMenu()">Load Menu</button>
         <button onclick="loadOrdersForBooking()">
           Load Orders for Booking
         </button>
       </div>
-
-      <!-- Menu picker -->
       <div id="menuPicker" style="margin-top: 10px">
         <div class="muted">Click "Load Menu" to browse items</div>
       </div>
-
-      <!-- Selected item + qty -->
       <div class="panel">
         <div class="muted">Selected item</div>
         <div
@@ -403,8 +506,6 @@
         </div>
         <button class="btn-confirm" onclick="createOrder()">Place Order</button>
       </div>
-
-      <!-- Orders list -->
       <h3 style="margin-top: 16px">Orders for Booking</h3>
       <div id="ordersList">
         <div class="muted">Click "Load Orders for Booking"</div>

@@ -353,6 +353,83 @@ def cancel_booking(
 
 
 # ----------------------------
+# Seat Assignments
+# ----------------------------
+
+@app.post("/bookings/{booking_id}/seats", response_model=schemas.SeatAssignmentResponse)
+def assign_seat(
+    booking_id: int,
+    seat: schemas.AssignSeatInput,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_staff_or_admin),
+):
+    db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+    if not db_booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if db_booking.status != "seated":
+        raise HTTPException(status_code=400, detail="Can only assign seats to seated bookings")
+
+    # Check attendee belongs to this booking
+    attendee = db.query(models.BookingAttendee).filter(
+        models.BookingAttendee.id == seat.attendee_id,
+        models.BookingAttendee.booking_id == booking_id,
+    ).first()
+    if not attendee:
+        raise HTTPException(status_code=404, detail="Attendee not found on this booking")
+
+    # Check seat not already taken on this booking
+    existing = db.query(models.SeatAssignment).filter(
+        models.SeatAssignment.booking_id == booking_id,
+        models.SeatAssignment.table_id == seat.table_id,
+        models.SeatAssignment.seat_number == seat.seat_number,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Seat {seat.seat_number} at table {seat.table_id} already assigned")
+
+    db_seat = models.SeatAssignment(
+        booking_id=booking_id,
+        attendee_id=seat.attendee_id,
+        table_id=seat.table_id,
+        seat_number=seat.seat_number,
+    )
+    db.add(db_seat)
+    db.commit()
+    db.refresh(db_seat)
+    return db_seat
+
+
+@app.get("/bookings/{booking_id}/seats", response_model=List[schemas.SeatAssignmentResponse])
+def get_seats(
+    booking_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_staff_or_admin),
+):
+    db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+    if not db_booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return db_booking.seat_assignments
+
+
+@app.delete("/bookings/{booking_id}/seats/{seat_id}")
+def remove_seat(
+    booking_id: int,
+    seat_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_staff_or_admin),
+):
+    db_seat = db.query(models.SeatAssignment).filter(
+        models.SeatAssignment.id == seat_id,
+        models.SeatAssignment.booking_id == booking_id,
+    ).first()
+    if not db_seat:
+        raise HTTPException(status_code=404, detail="Seat assignment not found")
+
+    db.delete(db_seat)
+    db.commit()
+    return {"message": f"Seat assignment {seat_id} removed."}
+
+
+# ----------------------------
 # Public invite link — no auth
 # ----------------------------
 

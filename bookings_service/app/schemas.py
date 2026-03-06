@@ -50,6 +50,23 @@ class AttendeeResponse(BaseModel):
 
 
 # ----------------------------
+# Seat Assignments
+# ----------------------------
+class AssignSeatInput(BaseModel):
+    attendee_id: int
+    table_id: int
+    seat_number: int
+
+
+class SeatAssignmentResponse(BaseModel):
+    id: int
+    attendee_id: int
+    table_id: int
+    seat_number: int
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ----------------------------
 # Mixins
 # ----------------------------
 class WithID(BaseModel):
@@ -69,7 +86,6 @@ class CreateBooking(BaseModel):
     date: date
     service_period: str
 
-    # Empty means draft (no tables yet)
     table_ids: List[int] = []
     attendees: List[AttendeeInput] = []
 
@@ -145,7 +161,7 @@ class BookingResponse(WithID, WithTimestamps):
     date: date
     service_period: str
 
-    party_size: int = 0  # computed in build_response()
+    party_size: int = 0
     status: str
 
     ordering_mode: Optional[str]
@@ -157,8 +173,8 @@ class BookingResponse(WithID, WithTimestamps):
 
     tables: List[BookingTableResponse] = []
     attendees: List[AttendeeResponse] = []
+    seat_assignments: List[SeatAssignmentResponse] = []
 
-    # computed flags for frontend
-    has_orders: bool = False  # to be wired later
+    has_orders: bool = False
 
     model_config = ConfigDict(from_attributes=True)

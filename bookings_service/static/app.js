@@ -1,12 +1,10 @@
 // ── Service URLs ────────────────────────────────────────────────────────────
-// Correct port assignments:
-const ROOMS_API = "http://localhost:8080"; // rooms_service
-const USERS_API = "http://localhost:8081"; // users_service
-const BOOKINGS_API = "http://localhost:8082"; // bookings_service
-const ORDERS_API = "http://localhost:8083"; // orders_service
-const MENU_API = "http://localhost:8084"; // menu_service
-
-
+const ROOMS_API = "http://localhost:8080";
+const USERS_API = "http://localhost:8081";
+const BOOKINGS_API = "http://localhost:8082";
+const ORDERS_API = "http://localhost:8083";
+const MENU_API = "http://localhost:8084";
+const CARDS_API = "http://localhost:8085";
 
 // Keep identical to users_service/app/constants/dietary.py
 const DIETARY_OPTIONS = [
@@ -38,23 +36,16 @@ async function apiRequest(url, options = {}) {
     headers: options.headers || {},
     body: options.body ? safeJsonParse(options.body) : null,
   };
-  setOutput({ stage: "REQUEST", request: requestInfo });
 
   try {
     const res = await fetch(url, options);
     const data = await res.json().catch(() => ({}));
-    setOutput({
-      stage: "RESPONSE",
-      request: requestInfo,
-      response: { status: res.status, ok: res.ok, data },
-    });
+    if (!res.ok) {
+      setOutput(`❌ ${res.status} — ${data?.detail || JSON.stringify(data)}`);
+    }
     return { res, data };
   } catch (err) {
-    setOutput({
-      stage: "NETWORK ERROR",
-      request: requestInfo,
-      error: String(err),
-    });
+    setOutput(`🔴 NETWORK ERROR — ${String(err)}`);
     throw err;
   }
 }
@@ -208,12 +199,16 @@ function renderBookings(list) {
       const ordersFlag = b.has_orders
         ? `<span style="color:#E67E22;font-weight:600"> · has orders</span>`
         : "";
+      const seats = b.seat_assignments || [];
+      const seatsFlag = seats.length
+        ? `<span style="color:#16A085;font-weight:600"> · ${seats.length} seated</span>`
+        : "";
       return `
         <div class="booking">
-          <h4>#${b.id} — ${b.date} — ${b.service_period} — <span style="color:${statusColor}">${b.status}</span>${ordersFlag}</h4>
+          <h4>#${b.id} — ${b.date} — ${b.service_period} — <span style="color:${statusColor}">${b.status}</span>${ordersFlag}${seatsFlag}</h4>
           <div><b>User:</b> ${b.user_id} | <b>Party:</b> ${b.party_size ?? ""} | <b>Duration:</b> ${b.duration_minutes ?? ""}</div>
           <div><b>Tables:</b> ${tables || "(none)"}</div>
-          <div><b>Attendees:</b> ${attendees || "(none)"}</div>
+          <div><b>Attendees:</b> ${attendees || "(none)"} ${b.attendees ? b.attendees.map((a) => `<span class="muted">(id:${a.id})</span>`).join(" ") : ""}</div>
           <div><b>Notes:</b> ${b.notes || ""}</div>
         </div>`;
     })
@@ -269,7 +264,7 @@ async function whoAmI() {
 async function loadMembersForUser() {
   const userIdRaw = byId("user_id")?.value?.trim();
   if (!userIdRaw) {
-    setOutput({ error: "Enter user_id first (or click Who am I)" });
+    setOutput("❌ Enter user_id first (or click Who am I)");
     return;
   }
   const { res, data } = await apiRequest(
@@ -429,15 +424,15 @@ async function createBooking() {
         : null;
 
   if (!userIdRaw) {
-    setOutput({ error: "user_id is required" });
+    setOutput("❌ user_id is required");
     return;
   }
   if (!bookingDate) {
-    setOutput({ error: "date is required" });
+    setOutput("❌ date is required");
     return;
   }
   if (!servicePeriod) {
-    setOutput({ error: "service_period is required" });
+    setOutput("❌ service_period is required");
     return;
   }
 
@@ -464,7 +459,7 @@ async function createBooking() {
 async function confirmBooking() {
   const id = byId("action_booking_id")?.value?.trim();
   if (!id) {
-    setOutput({ error: "booking_id is required" });
+    setOutput("❌ booking_id is required");
     return;
   }
   const { res } = await apiRequest(`${BOOKINGS_API}/bookings/${id}/confirm`, {
@@ -478,7 +473,7 @@ async function confirmBooking() {
 async function seatBooking() {
   const id = byId("action_booking_id")?.value?.trim();
   if (!id) {
-    setOutput({ error: "booking_id is required" });
+    setOutput("❌ booking_id is required");
     return;
   }
   const { res } = await apiRequest(`${BOOKINGS_API}/bookings/${id}/seat`, {
@@ -492,7 +487,7 @@ async function seatBooking() {
 async function closeBooking() {
   const id = byId("action_booking_id")?.value?.trim();
   if (!id) {
-    setOutput({ error: "booking_id is required" });
+    setOutput("❌ booking_id is required");
     return;
   }
   const { res } = await apiRequest(`${BOOKINGS_API}/bookings/${id}/close`, {
@@ -506,7 +501,7 @@ async function closeBooking() {
 async function cancelBooking() {
   const id = byId("action_booking_id")?.value?.trim();
   if (!id) {
-    setOutput({ error: "booking_id is required" });
+    setOutput("❌ booking_id is required");
     return;
   }
   const { res } = await apiRequest(`${BOOKINGS_API}/bookings/${id}`, {
@@ -515,6 +510,200 @@ async function cancelBooking() {
   });
   if (!res.ok) return;
   await loadBookings();
+}
+
+// ── Seat Assignments ─────────────────────────────────────────────────────────
+async function assignSeat() {
+  const bookingId = byId("seat_booking_id")?.value?.trim();
+  const attendeeId = byId("seat_attendee_id")?.value?.trim();
+  const tableId = byId("seat_table_id")?.value?.trim();
+  const seatNumber = byId("seat_number")?.value?.trim();
+
+  if (!bookingId) {
+    setOutput("❌ booking_id is required");
+    return;
+  }
+  if (!attendeeId) {
+    setOutput("❌ attendee_id is required");
+    return;
+  }
+  if (!tableId) {
+    setOutput("❌ table_id is required");
+    return;
+  }
+  if (!seatNumber) {
+    setOutput("❌ seat_number is required");
+    return;
+  }
+
+  const { res } = await apiRequest(
+    `${BOOKINGS_API}/bookings/${bookingId}/seats`,
+    {
+      method: "POST",
+      headers: getAuthHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        attendee_id: Number(attendeeId),
+        table_id: Number(tableId),
+        seat_number: Number(seatNumber),
+      }),
+    },
+  );
+  if (!res.ok) return;
+  await loadSeatsForBooking();
+}
+
+async function loadSeatsForBooking() {
+  const bookingId = byId("seat_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput("❌ Enter a booking_id");
+    return;
+  }
+  const { res, data } = await apiRequest(
+    `${BOOKINGS_API}/bookings/${bookingId}/seats`,
+    { method: "GET", headers: getAuthHeaders() },
+  );
+  if (!res.ok) return;
+  renderSeatsList(Array.isArray(data) ? data : []);
+}
+
+function renderSeatsList(seats) {
+  const el = byId("seatsList");
+  if (!el) return;
+  if (!seats.length) {
+    el.innerHTML = `<div class="muted">No seat assignments for this booking.</div>`;
+    return;
+  }
+  el.innerHTML = seats
+    .map(
+      (s) => `
+      <div class="booking">
+        <div>
+          <b>Seat #${s.id}</b> — Attendee ${s.attendee_id} → Table ${s.table_id}, Seat ${s.seat_number}
+          <button class="btn-cancel" style="margin-left:12px;padding:4px 10px" onclick="removeSeat(${s.id})">Remove</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+}
+
+async function removeSeat(seatId) {
+  const bookingId = byId("seat_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput("❌ booking_id is required");
+    return;
+  }
+  const { res } = await apiRequest(
+    `${BOOKINGS_API}/bookings/${bookingId}/seats/${seatId}`,
+    { method: "DELETE", headers: getAuthHeaders() },
+  );
+  if (!res.ok) return;
+  await loadSeatsForBooking();
+}
+
+// ── Reservation Cards ─────────────────────────────────────────────────────────
+async function generateCard() {
+  const bookingId = byId("card_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput("❌ booking_id is required");
+    return;
+  }
+
+  const jwt = getJwt();
+  let actorUserId = 1;
+  let actorRole = "admin";
+  if (jwt) {
+    try {
+      const payload = JSON.parse(atob(jwt.split(".")[1]));
+      actorUserId = parseInt(payload.sub) || 1;
+      actorRole = payload.role || "admin";
+    } catch {}
+  }
+
+  const { res, data } = await apiRequest(`${CARDS_API}/cards/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", accept: "application/json" },
+    body: JSON.stringify({
+      booking_id: Number(bookingId),
+      actor_user_id: actorUserId,
+      actor_role: actorRole,
+    }),
+  });
+  if (!res.ok) return;
+  renderCard(data);
+}
+
+async function loadCard() {
+  const bookingId = byId("card_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput("❌ booking_id is required");
+    return;
+  }
+  const { res, data } = await apiRequest(`${CARDS_API}/cards/${bookingId}`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) return;
+  renderCard(data);
+}
+
+async function loadAllCards() {
+  const { res, data } = await apiRequest(`${CARDS_API}/cards/`, {
+    method: "GET",
+    headers: getAuthHeaders(),
+  });
+  if (!res.ok) return;
+  const el = byId("cardDisplay");
+  if (!el) return;
+  if (!Array.isArray(data) || !data.length) {
+    el.textContent = "No cards found.";
+    return;
+  }
+  el.textContent = data.map(formatCard).join("\n\n" + "─".repeat(60) + "\n\n");
+}
+
+function formatCard(c) {
+  const totalDollars = c.order_total_cents
+    ? `$${(c.order_total_cents / 100).toFixed(2)}`
+    : "$0.00";
+  return [
+    `BOOKING_ID:         ${c.booking_id}`,
+    `CREATOR:            ${c.creator_name} [user_id: ${c.creator_user_id}, role: ${c.creator_role}]`,
+    `STATUS:             ${c.status}`,
+    `BOOKING_SUPERSTRING: ${c.booking_superstring}`,
+    `PARTY_SIZE:         ${c.party_size}`,
+    `DURATION:           ${c.duration_minutes} min`,
+    c.notes ? `NOTES:              ${c.notes}` : null,
+    ``,
+    `ATTENDEES:`,
+    c.attendee_superstring || "  (none)",
+    ``,
+    `ORDER_TOTAL:        ${totalDollars}`,
+    c.flags ? `FLAGS:              ${c.flags}` : null,
+    ``,
+    `CREATED:            ${formatAuditDate(c.created_at)} by ${c.created_by}`,
+    `UPDATED:            ${formatAuditDate(c.updated_at)} by ${c.updated_by}`,
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
+}
+
+function formatAuditDate(isoStr) {
+  if (!isoStr) return "—";
+  const d = new Date(isoStr);
+  return d.toLocaleString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+function renderCard(c) {
+  const el = byId("cardDisplay");
+  if (!el) return;
+  el.textContent = formatCard(c);
 }
 
 // ── Orders panel ─────────────────────────────────────────────────────────────
@@ -537,14 +726,11 @@ function renderMenuPicker() {
     el.innerHTML = `<div class="muted">No menu items loaded. Click "Load Menu".</div>`;
     return;
   }
-
-  // Group by category
   const byCategory = {};
   for (const item of menuCache) {
     if (!byCategory[item.category]) byCategory[item.category] = [];
     byCategory[item.category].push(item);
   }
-
   el.innerHTML = Object.entries(byCategory)
     .map(
       ([cat, items]) => `
@@ -556,13 +742,11 @@ function renderMenuPicker() {
             (item) => `
           <button onclick="setOrderMenuItem(${item.id}, '${item.name.replace(/'/g, "\\'")}', ${item.price_cents})">
             ${item.name} <span class="muted">$${(item.price_cents / 100).toFixed(2)}</span>
-          </button>
-        `,
+          </button>`,
           )
           .join("")}
       </div>
-    </div>
-  `,
+    </div>`,
     )
     .join("");
 }
@@ -584,31 +768,29 @@ async function createOrder() {
   const itemNotes = byId("order_item_notes")?.value?.trim();
 
   if (!bookingId) {
-    setOutput({ error: "booking_id is required" });
+    setOutput("❌ booking_id is required");
     return;
   }
   if (!menuItemId) {
-    setOutput({ error: "Select a menu item first" });
+    setOutput("❌ Select a menu item first");
     return;
   }
-
-  const payload = {
-    booking_id: Number(bookingId),
-    attendee_id: attendeeId ? Number(attendeeId) : null,
-    notes: notes || null,
-    items: [
-      {
-        menu_item_id: Number(menuItemId),
-        quantity: Number(quantity),
-        notes: itemNotes || null,
-      },
-    ],
-  };
 
   const { res } = await apiRequest(`${ORDERS_API}/orders/`, {
     method: "POST",
     headers: getAuthHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      booking_id: Number(bookingId),
+      attendee_id: attendeeId ? Number(attendeeId) : null,
+      notes: notes || null,
+      items: [
+        {
+          menu_item_id: Number(menuItemId),
+          quantity: Number(quantity),
+          notes: itemNotes || null,
+        },
+      ],
+    }),
   });
   if (!res.ok) return;
   await loadOrdersForBooking();
@@ -617,10 +799,9 @@ async function createOrder() {
 async function loadOrdersForBooking() {
   const bookingId = byId("order_booking_id")?.value?.trim();
   if (!bookingId) {
-    setOutput({ error: "Enter a booking_id to load its orders" });
+    setOutput("❌ Enter a booking_id to load its orders");
     return;
   }
-
   const { res, data } = await apiRequest(
     `${ORDERS_API}/orders/?booking_id=${bookingId}`,
     { method: "GET", headers: getAuthHeaders() },
@@ -636,13 +817,11 @@ function renderOrdersList(orders) {
     el.innerHTML = `<div class="muted">No orders for this booking.</div>`;
     return;
   }
-
   const statusColors = {
     pending: "#888",
     confirmed: "#2980B9",
     served: "#27AE60",
   };
-
   el.innerHTML = orders
     .map((o) => {
       const color = statusColors[o.status] || "#333";
@@ -676,7 +855,7 @@ function renderOrdersList(orders) {
 async function advanceOrderStatus(orderId, currentStatus) {
   const next = { pending: "confirmed", confirmed: "served" }[currentStatus];
   if (!next) {
-    setOutput({ error: `Order is already ${currentStatus}` });
+    setOutput(`❌ Order is already ${currentStatus}`);
     return;
   }
   const { res } = await apiRequest(`${ORDERS_API}/orders/${orderId}`, {
