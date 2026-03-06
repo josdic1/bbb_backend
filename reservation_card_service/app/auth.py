@@ -1,9 +1,10 @@
 # reservation_card_service/app/auth.py
+import os
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
-SECRET_KEY = "your-secret-key-here"
+SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
 ALGORITHM = "HS256"
 
 bearer_scheme = HTTPBearer(auto_error=False)

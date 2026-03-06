@@ -1,4 +1,5 @@
 # orders_service/app/auth.py
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from . import database, models
 
-SECRET_KEY = "change-me"
+SECRET_KEY = os.environ.get("SECRET_KEY", "change-me")
 ALGORITHM = "HS256"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="http://localhost:8081/auth/login")

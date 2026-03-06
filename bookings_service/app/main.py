@@ -2,6 +2,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, date
 import uuid
+import httpx
 from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -13,6 +14,8 @@ from . import models, schemas, database, auth
 from .constants.service_periods import DINNER_DAYS
 
 models.Base.metadata.create_all(bind=database.engine)
+
+CARD_SERVICE_URL = "http://localhost:8085"
 
 
 @asynccontextmanager
@@ -33,6 +36,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ----------------------------
+# Card fire-and-forget
+# ----------------------------
+
+def fire_card(booking_id: int, actor_user_id: int, actor_role: str):
+    """
+    Fire-and-forget POST to reservation_card_service.
+    Never blocks the booking response. Silently swallows all errors.
+    """
+    try:
+        httpx.post(
+            f"{CARD_SERVICE_URL}/cards/",
+            json={
+                "booking_id": booking_id,
+                "actor_user_id": actor_user_id,
+                "actor_role": actor_role,
+            },
+            timeout=2.0,
+        )
+    except Exception:
+        pass
 
 
 # ----------------------------
@@ -294,6 +320,7 @@ def confirm_booking(
     db_booking.status = "confirmed"
     db.commit()
     db.refresh(db_booking)
+    fire_card(booking_id, current_user["id"], current_user["role"])
     return build_response(db_booking, db)
 
 
@@ -301,7 +328,7 @@ def confirm_booking(
 def seat_booking(
     booking_id: int,
     db: Session = Depends(database.get_db),
-    _: dict = Depends(auth.require_staff_or_admin),
+    current_user: dict = Depends(auth.require_staff_or_admin),
 ):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
@@ -313,6 +340,7 @@ def seat_booking(
     db_booking.seated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(db_booking)
+    fire_card(booking_id, current_user["id"], current_user["role"])
     return build_response(db_booking, db)
 
 
@@ -320,7 +348,7 @@ def seat_booking(
 def close_booking(
     booking_id: int,
     db: Session = Depends(database.get_db),
-    _: dict = Depends(auth.require_staff_or_admin),
+    current_user: dict = Depends(auth.require_staff_or_admin),
 ):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
@@ -331,6 +359,7 @@ def close_booking(
     db_booking.status = "completed"
     db.commit()
     db.refresh(db_booking)
+    fire_card(booking_id, current_user["id"], current_user["role"])
     return build_response(db_booking, db)
 
 
@@ -338,7 +367,7 @@ def close_booking(
 def cancel_booking(
     booking_id: int,
     db: Session = Depends(database.get_db),
-    _: dict = Depends(auth.require_staff_or_admin),
+    current_user: dict = Depends(auth.require_staff_or_admin),
 ):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
@@ -349,6 +378,7 @@ def cancel_booking(
 
     db_booking.status = "cancelled"
     db.commit()
+    fire_card(booking_id, current_user["id"], current_user["role"])
     return {"message": f"Booking {booking_id} cancelled."}
 
 
@@ -369,7 +399,6 @@ def assign_seat(
     if db_booking.status != "seated":
         raise HTTPException(status_code=400, detail="Can only assign seats to seated bookings")
 
-    # Check attendee belongs to this booking
     attendee = db.query(models.BookingAttendee).filter(
         models.BookingAttendee.id == seat.attendee_id,
         models.BookingAttendee.booking_id == booking_id,
@@ -377,7 +406,6 @@ def assign_seat(
     if not attendee:
         raise HTTPException(status_code=404, detail="Attendee not found on this booking")
 
-    # Check seat not already taken on this booking
     existing = db.query(models.SeatAssignment).filter(
         models.SeatAssignment.booking_id == booking_id,
         models.SeatAssignment.table_id == seat.table_id,
