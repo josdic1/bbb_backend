@@ -114,9 +114,14 @@ def add_attendees(db: Session, booking_id: int, attendees: List[schemas.Attendee
         )
 
 
-def build_response(db_booking: models.Booking) -> schemas.BookingResponse:
+def build_response(db_booking: models.Booking, db: Session) -> schemas.BookingResponse:
     r = schemas.BookingResponse.model_validate(db_booking)
     r.party_size = len(db_booking.attendees)
+    count = db.execute(
+        text("SELECT COUNT(*) FROM orders WHERE booking_id=:bid AND is_active=true"),
+        {"bid": db_booking.id}
+    ).scalar()
+    r.has_orders = (count or 0) > 0
     return r
 
 
@@ -159,7 +164,7 @@ def create_booking(
 
     db.commit()
     db.refresh(db_booking)
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 @app.get("/bookings/", response_model=List[schemas.BookingResponse])
@@ -177,7 +182,7 @@ def get_bookings(
         query = query.filter(models.Booking.service_period == service_period)
     if status:
         query = query.filter(models.Booking.status == status)
-    return [build_response(b) for b in query.all()]
+    return [build_response(b, db) for b in query.all()]
 
 
 @app.get("/bookings/{booking_id}", response_model=schemas.BookingResponse)
@@ -191,7 +196,7 @@ def get_booking(
         raise HTTPException(status_code=404, detail="Booking not found")
     if current_user["role"] == "member" and db_booking.user_id != current_user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 @app.patch("/bookings/{booking_id}", response_model=schemas.BookingResponse)
@@ -239,10 +244,9 @@ def update_booking(
         db.query(models.BookingAttendee).filter(models.BookingAttendee.booking_id == booking_id).delete()
         add_attendees(db, booking_id, booking.attendees)
 
-    db_booking.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(db_booking)
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 @app.patch("/bookings/{booking_id}/confirm", response_model=schemas.BookingResponse)
@@ -288,10 +292,9 @@ def confirm_booking(
     check_availability(db, table_ids, db_booking.date, db_booking.service_period)
 
     db_booking.status = "confirmed"
-    db_booking.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(db_booking)
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 @app.patch("/bookings/{booking_id}/seat", response_model=schemas.BookingResponse)
@@ -308,10 +311,9 @@ def seat_booking(
 
     db_booking.status = "seated"
     db_booking.seated_at = datetime.now(timezone.utc)
-    db_booking.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(db_booking)
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 @app.patch("/bookings/{booking_id}/close", response_model=schemas.BookingResponse)
@@ -327,10 +329,9 @@ def close_booking(
         raise HTTPException(status_code=400, detail="Only seated bookings can be closed")
 
     db_booking.status = "completed"
-    db_booking.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(db_booking)
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 @app.delete("/bookings/{booking_id}")
@@ -347,7 +348,6 @@ def cancel_booking(
         raise HTTPException(status_code=400, detail="Completed bookings cannot be cancelled")
 
     db_booking.status = "cancelled"
-    db_booking.updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"message": f"Booking {booking_id} cancelled."}
 
@@ -361,7 +361,7 @@ def get_booking_by_token(token: str, db: Session = Depends(database.get_db)):
     db_booking = db.query(models.Booking).filter(models.Booking.invite_token == token).first()
     if not db_booking or db_booking.status in ("completed", "cancelled"):
         raise HTTPException(status_code=404, detail="Invite link not found or expired")
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 @app.post("/bookings/join/{token}", response_model=schemas.BookingResponse)
@@ -379,10 +379,10 @@ def join_booking_as_guest(token: str, guest: schemas.GuestJoinBooking, db: Sessi
             dietary_restrictions=guest.dietary_restrictions,
         )
     )
-    db_booking.updated_at = datetime.now(timezone.utc)
+
     db.commit()
     db.refresh(db_booking)
-    return build_response(db_booking)
+    return build_response(db_booking, db)
 
 
 # ----------------------------
