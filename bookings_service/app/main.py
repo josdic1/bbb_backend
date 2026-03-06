@@ -1,4 +1,5 @@
 # bookings_service/app/main.py
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone, date
 import uuid
 from typing import List, Optional
@@ -13,23 +14,31 @@ from .constants.service_periods import DINNER_DAYS
 
 models.Base.metadata.create_all(bind=database.engine)
 
-app = FastAPI(title="...")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+
+app = FastAPI(title="Bookings Service", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "null",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "null",
+        "http://localhost:3000",
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
 # ----------------------------
 # Helpers
 # ----------------------------
+
 def check_availability(
     db: Session,
     table_ids: List[int],
@@ -80,6 +89,7 @@ def validate_member_ownership(db: Session, user_id: int, attendees: List[schemas
         text("SELECT id FROM members WHERE user_id = :user_id"),
         {"user_id": user_id}
     ).fetchall()
+
     valid_member_ids = {row.id for row in result}
 
     for a in member_attendees:
@@ -113,6 +123,7 @@ def build_response(db_booking: models.Booking) -> schemas.BookingResponse:
 # ----------------------------
 # Bookings
 # ----------------------------
+
 @app.post("/bookings/", response_model=schemas.BookingResponse)
 def create_booking(
     booking: schemas.CreateBooking,
@@ -344,6 +355,7 @@ def cancel_booking(
 # ----------------------------
 # Public invite link — no auth
 # ----------------------------
+
 @app.get("/bookings/join/{token}", response_model=schemas.BookingResponse)
 def get_booking_by_token(token: str, db: Session = Depends(database.get_db)):
     db_booking = db.query(models.Booking).filter(models.Booking.invite_token == token).first()
@@ -376,6 +388,7 @@ def join_booking_as_guest(token: str, guest: schemas.GuestJoinBooking, db: Sessi
 # ----------------------------
 # Availability — no auth
 # ----------------------------
+
 @app.get("/availability/")
 def get_availability(booking_date: date, service_period: str, db: Session = Depends(database.get_db)):
     if service_period not in ("lunch", "dinner"):

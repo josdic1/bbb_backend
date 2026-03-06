@@ -1,4 +1,4 @@
-# orders_service/app/auth.py
+# menu_service/app/auth.py
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 

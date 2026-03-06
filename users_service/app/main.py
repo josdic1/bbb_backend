@@ -15,14 +15,16 @@ app = FastAPI(title="...")
 # Dev-only CORS:
 # - If you run a dev server (React/Vite), allow that origin (usually :5173)
 # - If you open index.html via file://, the Origin is "null"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "null",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "null",
+        "http://localhost:3000",
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -226,3 +228,8 @@ def delete_member(
     db.delete(db_member)
     db.commit()
     return {"message": f"Member {member_id} removed."}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8081)

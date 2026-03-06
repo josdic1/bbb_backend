@@ -14,15 +14,15 @@ app = FastAPI(title="...")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "null",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "null",
+        "http://localhost:3000",
     ],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # GET /rooms/ — no auth (needed by booking flow and dev console)
 @app.get("/rooms/", response_model=List[schemas.RoomResponse])
