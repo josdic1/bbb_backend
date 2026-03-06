@@ -1,3 +1,4 @@
+# bookings_service/app/constants/service_periods.py
 SERVICE_PERIODS = {
     "lunch": {
         "start": "11:00",

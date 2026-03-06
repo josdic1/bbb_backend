@@ -105,18 +105,14 @@ def create_booking(booking: schemas.CreateBooking, db: Session = Depends(databas
     if booking.attendees:
         validate_attendees(booking.attendees)
 
-    check_availability(db, booking.table_ids, booking.date, booking.service_period)
-
-    has_tables = len(booking.table_ids) > 0
-    has_attendees = len(booking.attendees) > 0
-    status = "confirmed" if (has_tables and has_attendees) else "draft"
+    # Always create as draft — user must explicitly confirm via PATCH /bookings/{id}/confirm
     invite_token = str(uuid.uuid4()) if booking.ordering_mode == "group" else None
 
     db_booking = models.Booking(
         user_id=booking.user_id,
         date=booking.date,
         service_period=booking.service_period,
-        status=status,
+        status="draft",
         ordering_mode=booking.ordering_mode,
         invite_token=invite_token,
         duration_minutes=booking.duration_minutes,
@@ -166,6 +162,13 @@ def update_booking(booking_id: int, booking: schemas.UpdateBooking, db: Session 
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
+    # Only drafts can be freely edited
+    if db_booking.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only draft bookings can be edited (current status: {db_booking.status})"
+        )
+
     if booking.table_ids is not None or booking.date is not None or booking.service_period is not None:
         check_date = booking.date or db_booking.date
         check_period = booking.service_period or db_booking.service_period
@@ -178,7 +181,7 @@ def update_booking(booking_id: int, booking: schemas.UpdateBooking, db: Session 
             exclude_booking_id=booking_id,
         )
 
-    # handle ordering_mode change — generate token if switching to group
+    # Handle ordering_mode change — generate token if switching to group
     if booking.ordering_mode == "group" and not db_booking.invite_token:
         db_booking.invite_token = str(uuid.uuid4())
     elif booking.ordering_mode == "inperson":
@@ -197,23 +200,51 @@ def update_booking(booking_id: int, booking: schemas.UpdateBooking, db: Session 
         db.query(models.BookingAttendee).filter(models.BookingAttendee.booking_id == booking_id).delete()
         add_attendees(db, booking_id, booking.attendees)
 
-    # auto-promote draft to confirmed if now has tables + attendees
-    if db_booking.status == "draft":
-        has_tables = (
-            db.query(models.BookingTable)
-            .filter(models.BookingTable.booking_id == booking_id)
-            .count()
-            > 0
-        )
-        has_attendees = (
-            db.query(models.BookingAttendee)
-            .filter(models.BookingAttendee.booking_id == booking_id)
-            .count()
-            > 0
-        )
-        if has_tables and has_attendees:
-            db_booking.status = "confirmed"
+    db_booking.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(db_booking)
+    return build_response(db_booking)
 
+
+@app.patch("/bookings/{booking_id}/confirm", response_model=schemas.BookingResponse)
+def confirm_booking(booking_id: int, db: Session = Depends(database.get_db)):
+    db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
+    if not db_booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    if db_booking.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only draft bookings can be confirmed (current status: {db_booking.status})"
+        )
+
+    # Gate checks — all must pass or booking stays draft
+    missing = []
+    if not db_booking.attendees:
+        missing.append("at least one attendee required")
+    if not db_booking.date:
+        missing.append("date required")
+    if not db_booking.service_period:
+        missing.append("meal type required")
+
+    table_ids = [t.table_id for t in db_booking.tables]
+    if not table_ids:
+        missing.append("at least one table required")
+
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": "booking incomplete", "missing": missing}
+        )
+
+    # Dinner day check
+    if db_booking.service_period == "dinner" and db_booking.date.weekday() not in DINNER_DAYS:
+        raise HTTPException(status_code=400, detail="Dinner is only available Thu-Sun")
+
+    # Super string availability check — if conflict, stays draft
+    check_availability(db, table_ids, db_booking.date, db_booking.service_period)
+
+    db_booking.status = "confirmed"
     db_booking.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(db_booking)
@@ -256,6 +287,9 @@ def cancel_booking(booking_id: int, db: Session = Depends(database.get_db)):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+
+    if db_booking.status == "completed":
+        raise HTTPException(status_code=400, detail="Completed bookings cannot be cancelled")
 
     db_booking.status = "cancelled"
     db_booking.updated_at = datetime.now(timezone.utc)
