@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Bookings Dev Console</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Arial,
+          sans-serif;
+        padding: 16px;
+        max-width: 1200px;
+      }
+      label {
+        display: block;
+        margin-top: 10px;
+        font-weight: 600;
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 8px;
+        margin-top: 4px;
+      }
+      button {
+        padding: 10px 14px;
+        margin-top: 12px;
+        cursor: pointer;
+      }
+      .muted {
+        color: #666;
+        font-size: 12px;
+        margin-top: 6px;
+      }
+      .panel {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 12px;
+        margin-top: 10px;
+      }
+      .row2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .dash {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 12px;
+        align-items: start;
+      }
+      .stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .hstack {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .picker {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .picker button {
+        margin-top: 0;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid #ccc;
+        background: #fff;
+      }
+      .picker button.selected {
+        border-color: #333;
+        background: #f1f1f1;
+      }
+      .chiplist {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .chip {
+        border: 1px solid #bbb;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #f7f7f7;
+      }
+      #bookingsList {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .booking {
+        padding: 10px;
+        border-top: 1px solid #eee;
+      }
+      .booking:first-child {
+        border-top: 0;
+      }
+      .booking h4 {
+        margin: 0 0 6px 0;
+      }
+      pre {
+        background: #0b1020;
+        color: #d6e4ff;
+        padding: 10px;
+        border-radius: 10px;
+        overflow: auto;
+      }
+
+      /* Dietary multi-check */
+      .dietary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 6px;
+      }
+      .dietary label {
+        margin-top: 0;
+        font-weight: 500;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dietary input[type="checkbox"] {
+        width: auto;
+        margin-top: 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Bookings Dev Console</h1>
+
+    <div class="panel">
+      <label>JWT (users_service)</label>
+      <input
+        id="jwt"
+        placeholder="paste access_token here (no 'Bearer ' prefix)"
+        oninput="saveJwtLocal()"
+      />
+      <div class="muted">
+        Use users_service Swagger: POST /auth/login → access_token
+      </div>
+
+      <div class="hstack">
+        <button onclick="clearJwtLocal()">Clear Saved Token</button>
+      </div>
+
+      <div class="row2">
+        <div>
+          <button onclick="loadBookings()">Load Bookings</button>
+          <div class="muted">GET bookings_service /bookings/</div>
+        </div>
+        <div>
+          <button onclick="whoAmI()">Who am I (users_service /auth/me)</button>
+          <div class="muted">Auto-fills User ID when possible</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Dashboard</h2>
+      <div class="dash">
+        <!-- LEFT: Existing bookings -->
+        <div>
+          <h3>Existing Bookings</h3>
+          <div id="bookingsList">
+            <div class="muted">Click “Load Bookings”</div>
+          </div>
+        </div>
+
+        <!-- RIGHT: Members + Guests + Selected -->
+        <div>
+          <h3>Attendees Builder</h3>
+
+          <label>User ID</label>
+          <input id="user_id" type="number" placeholder="123" />
+          <div class="muted">Used for: Load Members (users_service)</div>
+
+          <button onclick="loadMembersForUser()">Load Members</button>
+
+          <div class="panel">
+            <div class="muted">Members (click to add/remove)</div>
+            <div id="membersPicker" class="picker"></div>
+
+            <div class="muted" style="margin-top: 10px">Guests</div>
+            <div class="hstack">
+              <button onclick="addGuestRow()">+ Add Guest</button>
+              <div class="muted">Adds another guest input row</div>
+            </div>
+            <div id="guestRows" class="stack" style="margin-top: 10px"></div>
+
+            <div class="muted" style="margin-top: 10px">
+              Selected Attendees (will be sent)
+            </div>
+            <div id="selectedAttendees" class="chiplist"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h2>Create Booking</h2>
+    <div class="panel">
+      <div class="row2">
+        <div>
+          <label>Date</label>
+          <input id="date" type="date" />
+        </div>
+
+        <div>
+          <label>Service Period</label>
+          <select id="service_period">
+            <option value="lunch">lunch</option>
+            <option value="dinner">dinner</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Rooms/Tables Picker -->
+      <div class="panel">
+        <div class="row2">
+          <div>
+            <button onclick="loadRoomsAndTables()">Load Rooms + Tables</button>
+            <div class="muted">GET rooms_service /rooms/</div>
+          </div>
+          <div>
+            <button onclick="clearSelectedTable()">Clear Selected Table</button>
+            <div class="muted">Clears table selection + table_id</div>
+          </div>
+        </div>
+
+        <div class="muted" style="margin-top: 10px">
+          Click a table to auto-fill Table ID
+        </div>
+
+        <div id="roomsTables" class="stack" style="margin-top: 10px"></div>
+      </div>
+
+      <div class="row2">
+        <div>
+          <label>Duration Minutes</label>
+          <input id="duration_minutes" type="number" value="120" />
+        </div>
+
+        <div>
+          <label>Table ID (optional)</label>
+          <input id="table_id" type="number" placeholder="45" />
+        </div>
+      </div>
+
+      <label>Notes</label>
+      <input id="notes" placeholder="Window if possible" />
+
+      <button onclick="createBooking()">
+        Create Booking (uses selected attendees)
+      </button>
+      <div class="muted">
+        This uses whatever is selected in the right-side Attendees Builder.
+      </div>
+    </div>
+
+    <h2>Debug Output</h2>
+    <pre id="output"></pre>
+
+    <script src="app.js"></script>
+  </body>
+</html>
