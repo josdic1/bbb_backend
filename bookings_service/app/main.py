@@ -7,17 +7,13 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from . import models, schemas, database
+from . import models, schemas, database, auth
 from .constants.service_periods import DINNER_DAYS
 
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(title="...")
 
-# Dev-only CORS:
-# - If your frontend is served by Vite/React, allow that origin (usually :5173)
-# - If you open index.html via file://, the browser Origin becomes "null"
-# NOTE: You do NOT need to include the API's own origin/port here (8082, 8080, etc).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -41,7 +37,7 @@ def check_availability(
     exclude_booking_id: Optional[int] = None,
 ):
     if not table_ids:
-        return  # draft bookings have no tables yet
+        return
 
     query = (
         db.query(models.BookingTable)
@@ -98,14 +94,17 @@ def build_response(db_booking: models.Booking) -> schemas.BookingResponse:
 # Bookings
 # ----------------------------
 @app.post("/bookings/", response_model=schemas.BookingResponse)
-def create_booking(booking: schemas.CreateBooking, db: Session = Depends(database.get_db)):
+def create_booking(
+    booking: schemas.CreateBooking,
+    db: Session = Depends(database.get_db),
+    current_user: dict = Depends(auth.get_current_user),
+):
     if booking.service_period == "dinner" and booking.date.weekday() not in DINNER_DAYS:
         raise HTTPException(status_code=400, detail="Dinner is only available Thu-Sun")
 
     if booking.attendees:
         validate_attendees(booking.attendees)
 
-    # Always create as draft — user must explicitly confirm via PATCH /bookings/{id}/confirm
     invite_token = str(uuid.uuid4()) if booking.ordering_mode == "group" else None
 
     db_booking = models.Booking(
@@ -137,6 +136,7 @@ def get_bookings(
     service_period: Optional[str] = None,
     status: Optional[str] = None,
     db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_staff_or_admin),
 ):
     query = db.query(models.Booking)
     if booking_date:
@@ -149,39 +149,45 @@ def get_bookings(
 
 
 @app.get("/bookings/{booking_id}", response_model=schemas.BookingResponse)
-def get_booking(booking_id: int, db: Session = Depends(database.get_db)):
+def get_booking(
+    booking_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: dict = Depends(auth.get_current_user),
+):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    if current_user["role"] == "member" and db_booking.user_id != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
     return build_response(db_booking)
 
 
 @app.patch("/bookings/{booking_id}", response_model=schemas.BookingResponse)
-def update_booking(booking_id: int, booking: schemas.UpdateBooking, db: Session = Depends(database.get_db)):
+def update_booking(
+    booking_id: int,
+    booking: schemas.UpdateBooking,
+    db: Session = Depends(database.get_db),
+    current_user: dict = Depends(auth.get_current_user),
+):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    # Only drafts can be freely edited
     if db_booking.status != "draft":
         raise HTTPException(
             status_code=400,
             detail=f"Only draft bookings can be edited (current status: {db_booking.status})"
         )
 
+    if current_user["role"] == "member" and db_booking.user_id != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
     if booking.table_ids is not None or booking.date is not None or booking.service_period is not None:
         check_date = booking.date or db_booking.date
         check_period = booking.service_period or db_booking.service_period
         check_tables = booking.table_ids or [t.table_id for t in db_booking.tables]
-        check_availability(
-            db,
-            check_tables,
-            check_date,
-            check_period,
-            exclude_booking_id=booking_id,
-        )
+        check_availability(db, check_tables, check_date, check_period, exclude_booking_id=booking_id)
 
-    # Handle ordering_mode change — generate token if switching to group
     if booking.ordering_mode == "group" and not db_booking.invite_token:
         db_booking.invite_token = str(uuid.uuid4())
     elif booking.ordering_mode == "inperson":
@@ -207,10 +213,17 @@ def update_booking(booking_id: int, booking: schemas.UpdateBooking, db: Session 
 
 
 @app.patch("/bookings/{booking_id}/confirm", response_model=schemas.BookingResponse)
-def confirm_booking(booking_id: int, db: Session = Depends(database.get_db)):
+def confirm_booking(
+    booking_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: dict = Depends(auth.get_current_user),
+):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+
+    if current_user["role"] == "member" and db_booking.user_id != current_user["id"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if db_booking.status != "draft":
         raise HTTPException(
@@ -218,7 +231,6 @@ def confirm_booking(booking_id: int, db: Session = Depends(database.get_db)):
             detail=f"Only draft bookings can be confirmed (current status: {db_booking.status})"
         )
 
-    # Gate checks — all must pass or booking stays draft
     missing = []
     if not db_booking.attendees:
         missing.append("at least one attendee required")
@@ -237,11 +249,9 @@ def confirm_booking(booking_id: int, db: Session = Depends(database.get_db)):
             detail={"reason": "booking incomplete", "missing": missing}
         )
 
-    # Dinner day check
     if db_booking.service_period == "dinner" and db_booking.date.weekday() not in DINNER_DAYS:
         raise HTTPException(status_code=400, detail="Dinner is only available Thu-Sun")
 
-    # Super string availability check — if conflict, stays draft
     check_availability(db, table_ids, db_booking.date, db_booking.service_period)
 
     db_booking.status = "confirmed"
@@ -252,7 +262,11 @@ def confirm_booking(booking_id: int, db: Session = Depends(database.get_db)):
 
 
 @app.patch("/bookings/{booking_id}/seat", response_model=schemas.BookingResponse)
-def seat_booking(booking_id: int, db: Session = Depends(database.get_db)):
+def seat_booking(
+    booking_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_staff_or_admin),
+):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -268,7 +282,11 @@ def seat_booking(booking_id: int, db: Session = Depends(database.get_db)):
 
 
 @app.patch("/bookings/{booking_id}/close", response_model=schemas.BookingResponse)
-def close_booking(booking_id: int, db: Session = Depends(database.get_db)):
+def close_booking(
+    booking_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_staff_or_admin),
+):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -283,7 +301,11 @@ def close_booking(booking_id: int, db: Session = Depends(database.get_db)):
 
 
 @app.delete("/bookings/{booking_id}")
-def cancel_booking(booking_id: int, db: Session = Depends(database.get_db)):
+def cancel_booking(
+    booking_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_staff_or_admin),
+):
     db_booking = db.query(models.Booking).filter(models.Booking.id == booking_id).first()
     if not db_booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -298,7 +320,7 @@ def cancel_booking(booking_id: int, db: Session = Depends(database.get_db)):
 
 
 # ----------------------------
-# Public invite link
+# Public invite link — no auth
 # ----------------------------
 @app.get("/bookings/join/{token}", response_model=schemas.BookingResponse)
 def get_booking_by_token(token: str, db: Session = Depends(database.get_db)):
@@ -330,7 +352,7 @@ def join_booking_as_guest(token: str, guest: schemas.GuestJoinBooking, db: Sessi
 
 
 # ----------------------------
-# Availability
+# Availability — no auth
 # ----------------------------
 @app.get("/availability/")
 def get_availability(booking_date: date, service_period: str, db: Session = Depends(database.get_db)):

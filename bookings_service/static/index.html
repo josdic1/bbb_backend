@@ -48,6 +48,11 @@
         grid-template-columns: 1fr 1fr;
         gap: 12px;
       }
+      .row4 {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr 1fr;
+        gap: 12px;
+      }
       .dash {
         display: grid;
         grid-template-columns: 2fr 1fr;
@@ -114,8 +119,6 @@
         border-radius: 10px;
         overflow: auto;
       }
-
-      /* Dietary multi-check */
       .dietary {
         display: flex;
         flex-wrap: wrap;
@@ -133,12 +136,45 @@
         width: auto;
         margin-top: 0;
       }
+      .btn-confirm {
+        background: #2980b9;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+      }
+      .btn-seat {
+        background: #27ae60;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+      }
+      .btn-close {
+        background: #8e44ad;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+      }
+      .btn-cancel {
+        background: #e74c3c;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+      }
+      .pipeline-label {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        color: #888;
+        margin-top: 4px;
+      }
     </style>
   </head>
 
   <body>
     <h1>Bookings Dev Console</h1>
 
+    <!-- AUTH -->
     <div class="panel">
       <label>JWT (users_service)</label>
       <input
@@ -147,44 +183,33 @@
         oninput="saveJwtLocal()"
       />
       <div class="muted">
-        Use users_service Swagger: POST /auth/login → access_token
+        users_service Swagger: POST /auth/login → copy access_token here
       </div>
-
       <div class="hstack">
         <button onclick="clearJwtLocal()">Clear Saved Token</button>
-      </div>
-
-      <div class="row2">
-        <div>
-          <button onclick="loadBookings()">Load Bookings</button>
-          <div class="muted">GET bookings_service /bookings/</div>
-        </div>
-        <div>
-          <button onclick="whoAmI()">Who am I (users_service /auth/me)</button>
-          <div class="muted">Auto-fills User ID when possible</div>
-        </div>
+        <button onclick="whoAmI()">Who am I</button>
+        <button onclick="loadBookings()">Load Bookings</button>
       </div>
     </div>
 
+    <!-- DASHBOARD -->
     <div class="panel">
       <h2>Dashboard</h2>
       <div class="dash">
-        <!-- LEFT: Existing bookings -->
+        <!-- LEFT: bookings list -->
         <div>
           <h3>Existing Bookings</h3>
           <div id="bookingsList">
-            <div class="muted">Click “Load Bookings”</div>
+            <div class="muted">Click "Load Bookings"</div>
           </div>
         </div>
 
-        <!-- RIGHT: Members + Guests + Selected -->
+        <!-- RIGHT: attendees builder -->
         <div>
           <h3>Attendees Builder</h3>
-
           <label>User ID</label>
           <input id="user_id" type="number" placeholder="123" />
-          <div class="muted">Used for: Load Members (users_service)</div>
-
+          <div class="muted">Auto-filled by Who am I, or enter manually</div>
           <button onclick="loadMembersForUser()">Load Members</button>
 
           <div class="panel">
@@ -194,27 +219,29 @@
             <div class="muted" style="margin-top: 10px">Guests</div>
             <div class="hstack">
               <button onclick="addGuestRow()">+ Add Guest</button>
-              <div class="muted">Adds another guest input row</div>
             </div>
             <div id="guestRows" class="stack" style="margin-top: 10px"></div>
 
-            <div class="muted" style="margin-top: 10px">
-              Selected Attendees (will be sent)
-            </div>
+            <div class="muted" style="margin-top: 10px">Selected Attendees</div>
             <div id="selectedAttendees" class="chiplist"></div>
           </div>
         </div>
       </div>
     </div>
 
-    <h2>Create Booking</h2>
+    <!-- CREATE BOOKING (always draft) -->
+    <h2>
+      Create Booking
+      <span class="muted" style="font-size: 13px; font-weight: 400"
+        >→ always saves as draft</span
+      >
+    </h2>
     <div class="panel">
       <div class="row2">
         <div>
           <label>Date</label>
           <input id="date" type="date" />
         </div>
-
         <div>
           <label>Service Period</label>
           <select id="service_period">
@@ -224,7 +251,6 @@
         </div>
       </div>
 
-      <!-- Rooms/Tables Picker -->
       <div class="panel">
         <div class="row2">
           <div>
@@ -233,14 +259,11 @@
           </div>
           <div>
             <button onclick="clearSelectedTable()">Clear Selected Table</button>
-            <div class="muted">Clears table selection + table_id</div>
           </div>
         </div>
-
         <div class="muted" style="margin-top: 10px">
-          Click a table to auto-fill Table ID
+          Click a table to select it
         </div>
-
         <div id="roomsTables" class="stack" style="margin-top: 10px"></div>
       </div>
 
@@ -249,24 +272,60 @@
           <label>Duration Minutes</label>
           <input id="duration_minutes" type="number" value="120" />
         </div>
-
         <div>
-          <label>Table ID (optional)</label>
-          <input id="table_id" type="number" placeholder="45" />
+          <label>Table ID (manual fallback)</label>
+          <input
+            id="table_id"
+            type="number"
+            placeholder="auto-filled by picker"
+          />
         </div>
       </div>
 
       <label>Notes</label>
       <input id="notes" placeholder="Window if possible" />
 
-      <button onclick="createBooking()">
-        Create Booking (uses selected attendees)
-      </button>
-      <div class="muted">
-        This uses whatever is selected in the right-side Attendees Builder.
+      <button onclick="createBooking()">Save as Draft</button>
+      <div class="muted">Uses selected attendees from the builder above</div>
+    </div>
+
+    <!-- PIPELINE ACTIONS -->
+    <h2>Pipeline Actions</h2>
+    <div class="panel">
+      <label>Booking ID</label>
+      <input
+        id="action_booking_id"
+        type="number"
+        placeholder="booking id from list above"
+      />
+
+      <div class="row4" style="margin-top: 12px">
+        <div>
+          <button class="btn-confirm" onclick="confirmBooking()">
+            Confirm
+          </button>
+          <div class="pipeline-label">draft → confirmed</div>
+          <div class="muted">Runs all gates + availability check</div>
+        </div>
+        <div>
+          <button class="btn-seat" onclick="seatBooking()">Seat</button>
+          <div class="pipeline-label">confirmed → seated</div>
+          <div class="muted">Party has arrived</div>
+        </div>
+        <div>
+          <button class="btn-close" onclick="closeBooking()">Close</button>
+          <div class="pipeline-label">seated → completed</div>
+          <div class="muted">Service finished</div>
+        </div>
+        <div>
+          <button class="btn-cancel" onclick="cancelBooking()">Cancel</button>
+          <div class="pipeline-label">any → cancelled</div>
+          <div class="muted">Soft delete, record kept</div>
+        </div>
       </div>
     </div>
 
+    <!-- DEBUG -->
     <h2>Debug Output</h2>
     <pre id="output"></pre>
 

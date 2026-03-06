@@ -1,7 +1,7 @@
 // Change ports if your services run elsewhere.
 const ROOMS_API = "http://localhost:8080"; // rooms_service
+const USERS_API = "http://localhost:8081"; // users_service
 const BOOKINGS_API = "http://localhost:8082"; // bookings_service
-const USERS_API = "http://localhost:8081"; // users_service (adjust if different)
 
 // Keep this list identical to users_service/app/constants/dietary.py
 // (Front-end cannot import that Python file directly; using a matching list avoids 404s.)
@@ -150,7 +150,7 @@ function renderRoomsTables() {
   if (!el) return;
 
   if (!Array.isArray(roomsCache) || roomsCache.length === 0) {
-    el.innerHTML = `<div class="muted">No rooms loaded yet. Click “Load Rooms + Tables”.</div>`;
+    el.innerHTML = `<div class="muted">No rooms loaded yet. Click "Load Rooms + Tables".</div>`;
     return;
   }
 
@@ -215,19 +215,29 @@ function renderBookings(list) {
           const base =
             a.type === "member" ? `member:${a.member_id}` : `guest:${a.name}`;
           const diet =
-            Array.isArray(a.dietary) && a.dietary.length
-              ? ` (${a.dietary.join(", ")})`
+            Array.isArray(a.dietary_restrictions) &&
+            a.dietary_restrictions.length
+              ? ` (${a.dietary_restrictions.join(", ")})`
               : "";
           return `${base}${diet}`;
         })
         .join(", ");
 
+      const statusColors = {
+        draft: "#888",
+        confirmed: "#2980B9",
+        seated: "#27AE60",
+        completed: "#8E44AD",
+        cancelled: "#E74C3C",
+      };
+      const statusColor = statusColors[b.status] || "#333";
+
       return `
         <div class="booking">
-          <h4>#${b.id} — ${b.date} — ${b.service_period} — ${b.status}</h4>
+          <h4>#${b.id} — ${b.date} — ${b.service_period} — <span style="color:${statusColor}">${b.status}</span></h4>
           <div><b>User:</b> ${b.user_id} | <b>Party:</b> ${b.party_size ?? ""} | <b>Duration:</b> ${b.duration_minutes ?? ""}</div>
-          <div><b>Tables:</b> ${tables || "(none)"} </div>
-          <div><b>Attendees:</b> ${attendees || "(none)"} </div>
+          <div><b>Tables:</b> ${tables || "(none)"}</div>
+          <div><b>Attendees:</b> ${attendees || "(none)"}</div>
           <div><b>Notes:</b> ${b.notes || ""}</div>
         </div>
       `;
@@ -246,15 +256,15 @@ async function loadBookings() {
 }
 
 // ---------- Members picker ----------
-let membersCache = []; // loaded members for the user
-let selectedMemberIds = new Set(); // selected member IDs
+let membersCache = [];
+let selectedMemberIds = new Set();
 
 function renderMembersPicker() {
   const el = byId("membersPicker");
   if (!el) return;
 
   if (!Array.isArray(membersCache) || membersCache.length === 0) {
-    el.innerHTML = `<div class="muted">No members loaded. Enter User ID and click “Load Members”.</div>`;
+    el.innerHTML = `<div class="muted">No members loaded. Enter User ID and click "Load Members".</div>`;
     renderSelectedAttendees();
     return;
   }
@@ -423,10 +433,8 @@ function getGuestRowsData() {
 function buildAttendeesPayload() {
   const attendees = [];
 
-  // Members
   for (const memberId of selectedMemberIds) {
     const dietArr = getMemberDietary(memberId);
-
     attendees.push({
       type: "member",
       member_id: Number(memberId),
@@ -434,10 +442,8 @@ function buildAttendeesPayload() {
     });
   }
 
-  // Guests
   for (const g of getGuestRowsData()) {
     const dietArr = normalizeDietary(g.dietary);
-
     attendees.push({
       type: "guest",
       name: g.name,
@@ -464,8 +470,8 @@ function renderSelectedAttendees() {
       const base =
         a.type === "member" ? `member:${a.member_id}` : `guest:${a.name}`;
       const diet =
-        Array.isArray(a.dietary) && a.dietary.length
-          ? ` — ${a.dietary.join(", ")}`
+        Array.isArray(a.dietary_restrictions) && a.dietary_restrictions.length
+          ? ` — ${a.dietary_restrictions.join(", ")}`
           : "";
       return `<span class="chip">${base}${diet}</span>`;
     })
@@ -479,10 +485,8 @@ async function createBooking() {
   const servicePeriod = byId("service_period")?.value;
   const durationRaw = byId("duration_minutes")?.value?.trim();
   const notes = byId("notes")?.value?.trim();
-
   const tableIdRaw = byId("table_id")?.value?.trim();
 
-  // Prefer the picker selection; fall back to manual input.
   const resolvedTableId =
     selectedTableId != null
       ? Number(selectedTableId)
@@ -508,7 +512,7 @@ async function createBooking() {
   const payload = {
     user_id: Number(userIdRaw),
     date: bookingDate,
-    service_period: servicePeriod, // "lunch" | "dinner"
+    service_period: servicePeriod,
     duration_minutes: durationRaw ? Number(durationRaw) : 120,
     notes: notes || null,
     table_ids: tableIds,
@@ -526,7 +530,83 @@ async function createBooking() {
   });
 
   if (!res.ok) return;
+  await loadBookings();
+}
 
+// ---------- Confirm booking ----------
+async function confirmBooking() {
+  const bookingId = byId("action_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput({ error: "booking_id is required" });
+    return;
+  }
+
+  const { res } = await apiRequest(
+    `${BOOKINGS_API}/bookings/${bookingId}/confirm`,
+    {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+    },
+  );
+
+  if (!res.ok) return;
+  await loadBookings();
+}
+
+// ---------- Seat booking ----------
+async function seatBooking() {
+  const bookingId = byId("action_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput({ error: "booking_id is required" });
+    return;
+  }
+
+  const { res } = await apiRequest(
+    `${BOOKINGS_API}/bookings/${bookingId}/seat`,
+    {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+    },
+  );
+
+  if (!res.ok) return;
+  await loadBookings();
+}
+
+// ---------- Close booking ----------
+async function closeBooking() {
+  const bookingId = byId("action_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput({ error: "booking_id is required" });
+    return;
+  }
+
+  const { res } = await apiRequest(
+    `${BOOKINGS_API}/bookings/${bookingId}/close`,
+    {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+    },
+  );
+
+  if (!res.ok) return;
+  await loadBookings();
+}
+
+// ---------- Cancel booking ----------
+async function cancelBooking() {
+  const bookingId = byId("action_booking_id")?.value?.trim();
+  if (!bookingId) {
+    setOutput({ error: "booking_id is required" });
+    return;
+  }
+
+  const { res } = await apiRequest(`${BOOKINGS_API}/bookings/${bookingId}`, {
+    method: "DELETE",
+    headers: getAuthHeaders(),
+  });
+
+  if (!res.ok) return;
   await loadBookings();
 }
 

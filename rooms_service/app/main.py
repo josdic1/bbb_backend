@@ -5,16 +5,12 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from . import models, schemas, database
+from . import models, schemas, database, auth
 
 models.Base.metadata.create_all(bind=database.engine)
 
 app = FastAPI(title="...")
 
-# Dev-only CORS:
-# - If you run a dev server (React/Vite), allow that origin (usually :5173)
-# - If you open index.html via file://, the Origin is "null"
-# NOTE: You do NOT need to include the API's own origin/port here (8080/8082/etc).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -27,9 +23,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. Forge a Room (create room + tables)
+
+# GET /rooms/ — no auth (needed by booking flow and dev console)
+@app.get("/rooms/", response_model=List[schemas.RoomResponse])
+def get_rooms(db: Session = Depends(database.get_db)):
+    return db.query(models.Room).all()
+
+
+# POST /rooms/ — admin only
 @app.post("/rooms/", response_model=schemas.RoomResponse)
-def create_room(room: schemas.CreateRoom, db: Session = Depends(database.get_db)):
+def create_room(
+    room: schemas.CreateRoom,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_admin),
+):
     db_room = models.Room(name=room.name, is_active=room.is_active)
     db.add(db_room)
     db.commit()
@@ -43,21 +50,19 @@ def create_room(room: schemas.CreateRoom, db: Session = Depends(database.get_db)
     return db_room
 
 
-# 2. Get the Rolodex (all rooms + all tables)
-@app.get("/rooms/", response_model=List[schemas.RoomResponse])
-def get_rooms(db: Session = Depends(database.get_db)):
-    return db.query(models.Room).all()
-
-
-# 3. Update a Room
+# PATCH /rooms/{room_id} — admin only
 @app.patch("/rooms/{room_id}", response_model=schemas.RoomResponse)
-def update_room(room_id: int, room: schemas.UpdateRoom, db: Session = Depends(database.get_db)):
+def update_room(
+    room_id: int,
+    room: schemas.UpdateRoom,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_admin),
+):
     db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    update_data = room.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
+    for key, value in room.model_dump(exclude_unset=True).items():
         setattr(db_room, key, value)
 
     db.commit()
@@ -65,9 +70,13 @@ def update_room(room_id: int, room: schemas.UpdateRoom, db: Session = Depends(da
     return db_room
 
 
-# 4. Delete a Room
+# DELETE /rooms/{room_id} — admin only
 @app.delete("/rooms/{room_id}")
-def delete_room(room_id: int, db: Session = Depends(database.get_db)):
+def delete_room(
+    room_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_admin),
+):
     db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -77,9 +86,14 @@ def delete_room(room_id: int, db: Session = Depends(database.get_db)):
     return {"message": f"Room {room_id} and its tables dissolved."}
 
 
-# Add a table to an existing room
+# POST /rooms/{room_id}/tables/ — admin only
 @app.post("/rooms/{room_id}/tables/", response_model=schemas.TableResponse)
-def add_table(room_id: int, table: schemas.TableAtom, db: Session = Depends(database.get_db)):
+def add_table(
+    room_id: int,
+    table: schemas.TableAtom,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_admin),
+):
     db_room = db.query(models.Room).filter(models.Room.id == room_id).first()
     if not db_room:
         raise HTTPException(status_code=404, detail="Room not found")
@@ -91,9 +105,14 @@ def add_table(room_id: int, table: schemas.TableAtom, db: Session = Depends(data
     return new_table
 
 
-# Update a table's seat count
+# PATCH /tables/{table_id} — admin only
 @app.patch("/tables/{table_id}", response_model=schemas.TableResponse)
-def update_table(table_id: int, table: schemas.TableAtom, db: Session = Depends(database.get_db)):
+def update_table(
+    table_id: int,
+    table: schemas.TableAtom,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_admin),
+):
     db_table = db.query(models.Table).filter(models.Table.id == table_id).first()
     if not db_table:
         raise HTTPException(status_code=404, detail="Table not found")
@@ -104,9 +123,13 @@ def update_table(table_id: int, table: schemas.TableAtom, db: Session = Depends(
     return db_table
 
 
-# Delete a table
+# DELETE /tables/{table_id} — admin only
 @app.delete("/tables/{table_id}")
-def delete_table(table_id: int, db: Session = Depends(database.get_db)):
+def delete_table(
+    table_id: int,
+    db: Session = Depends(database.get_db),
+    _: dict = Depends(auth.require_admin),
+):
     db_table = db.query(models.Table).filter(models.Table.id == table_id).first()
     if not db_table:
         raise HTTPException(status_code=404, detail="Table not found")
@@ -118,5 +141,4 @@ def delete_table(table_id: int, db: Session = Depends(database.get_db)):
 
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8080)
