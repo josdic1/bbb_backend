@@ -60,6 +60,7 @@ class Booking(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("TIMEZONE('utc', now())"),
+        onupdate=text("TIMEZONE('utc', now())"),
     )
 
     tables: Mapped[List["BookingTable"]] = relationship(

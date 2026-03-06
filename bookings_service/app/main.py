@@ -6,6 +6,7 @@ from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from . import models, schemas, database, auth
 from .constants.service_periods import DINNER_DAYS
@@ -70,6 +71,25 @@ def validate_attendees(attendees: List[schemas.AttendeeInput]):
             raise HTTPException(status_code=400, detail="name required for type=guest")
 
 
+def validate_member_ownership(db: Session, user_id: int, attendees: List[schemas.AttendeeInput]):
+    member_attendees = [a for a in attendees if a.type == "member"]
+    if not member_attendees:
+        return
+
+    result = db.execute(
+        text("SELECT id FROM members WHERE user_id = :user_id"),
+        {"user_id": user_id}
+    ).fetchall()
+    valid_member_ids = {row.id for row in result}
+
+    for a in member_attendees:
+        if a.member_id not in valid_member_ids:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Member {a.member_id} does not belong to this user"
+            )
+
+
 def add_attendees(db: Session, booking_id: int, attendees: List[schemas.AttendeeInput]):
     for a in attendees:
         db.add(
@@ -104,6 +124,7 @@ def create_booking(
 
     if booking.attendees:
         validate_attendees(booking.attendees)
+        validate_member_ownership(db, current_user["id"], booking.attendees)
 
     invite_token = str(uuid.uuid4()) if booking.ordering_mode == "group" else None
 
@@ -203,6 +224,7 @@ def update_booking(
 
     if booking.attendees is not None:
         validate_attendees(booking.attendees)
+        validate_member_ownership(db, current_user["id"], booking.attendees)
         db.query(models.BookingAttendee).filter(models.BookingAttendee.booking_id == booking_id).delete()
         add_attendees(db, booking_id, booking.attendees)
 
